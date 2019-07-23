@@ -1,0 +1,174 @@
+/*
+Simple Deep Sleep with Timer Wake Up
+=====================================
+ESP32 offers a deep sleep mode for effective power
+saving as power is an important factor for IoT
+applications. In this mode CPUs, most of the RAM,
+and all the digital peripherals which are clocked
+from APB_CLK are powered off. The only parts of
+the chip which can still be powered on are:
+RTC controller, RTC peripherals ,and RTC memories
+ 
+This code displays the most basic deep sleep with
+a timer to wake it up and how to store data in
+RTC memory to use it over reboots
+ 
+This code is under Public Domain License.
+ 
+Author:
+Pranav Cherukupalli <cherukupallip@gmail.com>
+*/
+//code for data sending start
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include "DHTesp.h"
+DHTesp dht;
+// Replace with your network credentials
+const char* ssid     = "wireless";
+const char* password = "wifipassord";
+// REPLACE with your Domain name and URL path or IP address with path
+const char* serverName = "http://domain.com:3055/post-esp-data.php";
+ 
+// Keep this API Key value to be compatible with the PHP code provided in the project page. 
+// If you change the apiKeyValue value, the PHP file /post-esp-data.php also needs to have the same key 
+String apiKeyValue = "tPmAT5Ab3j7F9";
+ 
+String sensorName = "DHT22";
+String sensorLocation = "Office";
+///Code for data sending stop
+#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  300        /* Time ESP32 will go to sleep (in seconds) */
+ 
+RTC_DATA_ATTR int bootCount = 0;
+ 
+/*
+Method to print the reason by which ESP32
+has been awaken from sleep
+*/
+void print_wakeup_reason(){
+  esp_sleep_wakeup_cause_t wakeup_reason;
+ 
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+ 
+  switch(wakeup_reason)
+  {
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+}
+ 
+void setup(){
+  Serial.begin(115200);
+  delay(1000); //Take some time to open up the Serial Monitor
+ 
+  //Increment boot number and print it every reboot
+  ++bootCount;
+  Serial.println("Boot number: " + String(bootCount));
+ 
+  //Print the wakeup reason for ESP32
+  print_wakeup_reason();
+  //data sending code start
+  
+  WiFi.begin(ssid, password);
+  Serial.println("Connecting");
+  //while(WiFi.status() != WL_CONNECTED) { 
+   //delay(500);
+  // Serial.print(".");
+  //}
+  delay(1000);
+  Serial.println("");
+  Serial.print("Connected to WiFi network with IP Address: ");
+  Serial.println(WiFi.localIP());
+  dht.setup(27,DHTesp::DHT22);
+   //Check WiFi connection status
+  if(WiFi.status()== WL_CONNECTED){
+    HTTPClient http;
+    
+    // Your Domain name with URL path or IP address with path
+    http.begin(serverName);
+    
+    // Specify content-type header
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    float temperature = dht.getTemperature();
+    float humidity = dht.getHumidity();
+    // Prepare your HTTP POST request data
+    String httpRequestData = "api_key=" + apiKeyValue + "&sensor=" + sensorName
+                          + "&location=" + sensorLocation + "&value1=" + String(temperature)
+                          + "&value2=" + String(humidity) + "&value3=" + "4.2" + "";
+    Serial.print("httpRequestData: ");
+    Serial.println(httpRequestData);
+    
+    // You can comment the httpRequestData variable above
+    // then, use the httpRequestData variable below (for testing purposes without the BME280 sensor)
+    //String httpRequestData = "api_key=tPmAT5Ab3j7F9&sensor=BME280&location=Office&value1=24.75&value2=49.54&value3=1005.14";
+ 
+    // Send HTTP POST request
+    int httpResponseCode = http.POST(httpRequestData);
+     
+    // If you need an HTTP request with a content type: text/plain
+    //http.addHeader("Content-Type", "text/plain");
+    //int httpResponseCode = http.POST("Hello, World!");
+    
+    // If you need an HTTP request with a content type: application/json, use the following:
+    //http.addHeader("Content-Type", "application/json");
+    //int httpResponseCode = http.POST("{\"value1\":\"19\",\"value2\":\"67\",\"value3\":\"78\"}");
+        
+    if (httpResponseCode>0) {
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+    }
+    else {
+      Serial.print("Error code: ");
+      Serial.println(httpResponseCode);
+    }
+    // Free resources
+    http.end();
+  }
+  else {
+    Serial.println("WiFi Disconnected");
+  }
+  //data sending code stop
+  /*
+  First we configure the wake up source
+  We set our ESP32 to wake up every 5 seconds
+  */
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+  " Seconds");
+ 
+  /*
+  Next we decide what all peripherals to shut down/keep on
+  By default, ESP32 will automatically power down the peripherals
+  not needed by the wakeup source, but if you want to be a poweruser
+  this is for you. Read in detail at the API docs
+  http://esp-idf.readthedocs.io/en/latest/api-reference/system/deep_sleep.html
+  Left the line commented as an example of how to configure peripherals.
+  The line below turns off all RTC peripherals in deep sleep.
+  */
+  //esp_deep_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+  //Serial.println("Configured all RTC Peripherals to be powered down in sleep");
+ 
+  /*
+  Now that we have setup a wake cause and if needed setup the
+  peripherals state in deep sleep, we can now start going to
+  deep sleep.
+  In the case that no wake up sources were provided but deep
+  sleep was started, it will sleep forever unless hardware
+  reset occurs.
+  */
+  //Code for data sending
+  
+  Serial.println("Going to sleep now");
+  Serial.flush(); 
+  esp_deep_sleep_start();
+  Serial.println("This will never be printed");
+}
+ 
+void loop(){
+  //This is not going to be called
+}
